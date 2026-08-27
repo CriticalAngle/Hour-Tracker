@@ -29,7 +29,7 @@ export function AppShell() {
               Hour Tracker
             </h1>
             <p className="text-sm text-muted-foreground">
-              Track hours logged across your projects.
+              Log hours worked with simplified labeling.
             </p>
           </div>
           <UserMenu />

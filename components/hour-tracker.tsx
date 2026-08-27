@@ -306,7 +306,7 @@ export function HourTracker({ uid }: { uid: string }) {
             <DialogHeader>
               <DialogTitle>Export Information</DialogTitle>
               <DialogDescription>
-                Send this information over to Hardik every other Sunday!
+                Easy copy and paste
               </DialogDescription>
             </DialogHeader>
             <code className="whitespace-pre-line">
@@ -318,7 +318,11 @@ export function HourTracker({ uid }: { uid: string }) {
               <DialogClose render={<Button type="button" variant="outline" />}>
                 Close
               </DialogClose>
-              <Button>
+              <Button onClick={() => {
+                navigator.clipboard.writeText(`${entries.map(entry => {
+                  return `Name: ${entry.name}\nDate: ${entry.date}\nTime: ${entry.startTime} - ${entry.endTime}\nHours: ${entry.hours}`
+                }).join('\n\n')}\n\nTotal Hours: ${totalHours}`);
+              }}>
                 <CopyIcon />
                 Copy
               </Button>
