@@ -1,7 +1,13 @@
 "use client"
 
 import * as React from "react"
-import { CopyIcon, ExternalLinkIcon, MoreHorizontal, Plus } from "lucide-react"
+import {
+  CopyIcon,
+  ExternalLinkIcon,
+  MoreHorizontal,
+  Plus,
+  Trash2Icon,
+} from "lucide-react"
 import TimePicker from "react-time-picker"
 import "react-time-picker/dist/TimePicker.css"
 import "react-clock/dist/Clock.css"
@@ -13,6 +19,8 @@ import {
   onSnapshot,
   orderBy,
   query,
+  updateDoc,
+  writeBatch,
 } from "firebase/firestore"
 
 import { db } from "@/lib/firebase"
@@ -95,13 +103,28 @@ export function HourTracker({ uid }: { uid: string }) {
   const [loading, setLoading] = React.useState(true)
   const [addEntryOpen, setAddEntryOpen] = React.useState(false)
   const [exportInformationOpen, setExportInformationOpen] = React.useState(false)
+  const [clearAllOpen, setClearAllOpen] = React.useState(false)
+  const [clearing, setClearing] = React.useState(false)
   const [name, setName] = React.useState("")
   const [date, setDate] = React.useState("")
   const [startTime, setStartTime] = React.useState<string | null>(null)
   const [endTime, setEndTime] = React.useState<string | null>(null)
 
+  const [editEntryOpen, setEditEntryOpen] = React.useState(false)
+  const [editingId, setEditingId] = React.useState<string | null>(null)
+  const [editName, setEditName] = React.useState("")
+  const [editStartTime, setEditStartTime] = React.useState<string | null>(null)
+  const [editEndTime, setEditEndTime] = React.useState<string | null>(null)
+
   const totalHours = entries.reduce((sum, entry) => sum + entry.hours, 0)
   const duration = hoursBetween(startTime ?? "", endTime ?? "")
+  const editDuration = hoursBetween(editStartTime ?? "", editEndTime ?? "")
+  const exportText = `${entries
+    .map(
+      (entry) =>
+        `Name: ${entry.name}\nDate: ${entry.date}\nTime: ${entry.startTime} - ${entry.endTime}\nHours: ${entry.hours}`
+    )
+    .join("\n\n")}\n\nTotal Hours: ${totalHours}`
 
   React.useEffect(() => {
     const entriesQuery = query(
@@ -109,19 +132,24 @@ export function HourTracker({ uid }: { uid: string }) {
       orderBy("date", "asc")
     )
     const unsubscribe = onSnapshot(entriesQuery, (snapshot) => {
-      setEntries(
-        snapshot.docs.map((docSnapshot) => {
-          const data = docSnapshot.data()
-          return {
-            id: docSnapshot.id,
-            name: data.name,
-            startTime: data.startTime,
-            endTime: data.endTime,
-            hours: data.hours,
-            date: data.date,
-          }
-        })
-      )
+      const nextEntries = snapshot.docs.map((docSnapshot) => {
+        const data = docSnapshot.data()
+        return {
+          id: docSnapshot.id,
+          name: data.name,
+          startTime: data.startTime,
+          endTime: data.endTime,
+          hours: data.hours,
+          date: data.date,
+        }
+      })
+      // Firestore only orders by date here; break ties within the same
+      // day by start time so the table reads earliest to latest.
+      nextEntries.sort((a, b) => {
+        if (a.date !== b.date) return a.date < b.date ? -1 : 1
+        return a.startTime < b.startTime ? -1 : a.startTime > b.startTime ? 1 : 0
+      })
+      setEntries(nextEntries)
       setLoading(false)
     })
 
@@ -148,6 +176,46 @@ export function HourTracker({ uid }: { uid: string }) {
 
   async function handleDelete(id: string) {
     await deleteDoc(doc(db, "users", uid, "entries", id))
+  }
+
+  function openEdit(entry: Entry) {
+    setEditingId(entry.id)
+    setEditName(entry.name)
+    setEditStartTime(entry.startTime)
+    setEditEndTime(entry.endTime)
+    setEditEntryOpen(true)
+  }
+
+  async function handleEditSubmit(event: React.FormEvent) {
+    event.preventDefault()
+    if (!editingId || !editName || !editStartTime || !editEndTime || !editDuration)
+      return
+
+    await updateDoc(doc(db, "users", uid, "entries", editingId), {
+      name: editName,
+      startTime: editStartTime,
+      endTime: editEndTime,
+      hours: editDuration,
+    })
+    setEditEntryOpen(false)
+    setEditingId(null)
+  }
+
+  async function handleClearAll() {
+    setClearing(true)
+    try {
+      // Firestore batches cap at 500 writes, so chunk in case of a large log.
+      for (let i = 0; i < entries.length; i += 450) {
+        const batch = writeBatch(db)
+        for (const entry of entries.slice(i, i + 450)) {
+          batch.delete(doc(db, "users", uid, "entries", entry.id))
+        }
+        await batch.commit()
+      }
+      setClearAllOpen(false)
+    } finally {
+      setClearing(false)
+    }
   }
 
   return (
@@ -191,6 +259,9 @@ export function HourTracker({ uid }: { uid: string }) {
                         <MoreHorizontal />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => openEdit(entry)}>
+                          Edit
+                        </DropdownMenuItem>
                         <DropdownMenuItem
                           variant="destructive"
                           onClick={() => handleDelete(entry.id)}
@@ -302,34 +373,125 @@ export function HourTracker({ uid }: { uid: string }) {
             <ExternalLinkIcon />
             Export Information
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-lg">
             <DialogHeader>
               <DialogTitle>Export Information</DialogTitle>
               <DialogDescription>
                 Easy copy and paste
               </DialogDescription>
             </DialogHeader>
-            <code className="whitespace-pre-line">
-              {`${entries.map(entry => {
-                return `Name: ${entry.name}\nDate: ${entry.date}\nTime: ${entry.startTime} - ${entry.endTime}\nHours: ${entry.hours}`
-              }).join('\n\n')}\n\nTotal Hours: ${totalHours}`}
-            </code>
+            <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border bg-muted/30 p-3">
+              <code className="whitespace-pre-line text-sm">
+                {exportText}
+              </code>
+            </div>
             <DialogFooter>
               <DialogClose render={<Button type="button" variant="outline" />}>
                 Close
               </DialogClose>
-              <Button onClick={() => {
-                navigator.clipboard.writeText(`${entries.map(entry => {
-                  return `Name: ${entry.name}\nDate: ${entry.date}\nTime: ${entry.startTime} - ${entry.endTime}\nHours: ${entry.hours}`
-                }).join('\n\n')}\n\nTotal Hours: ${totalHours}`);
-              }}>
+              <Button onClick={() => navigator.clipboard.writeText(exportText)}>
                 <CopyIcon />
                 Copy
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        <Dialog open={clearAllOpen} onOpenChange={setClearAllOpen}>
+          <DialogTrigger render={<Button variant="destructive" disabled={!entries.length} />}>
+            <Trash2Icon />
+            Clear all
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Clear all entries?</DialogTitle>
+              <DialogDescription>
+                This will permanently delete all {entries.length}{" "}
+                logged {entries.length === 1 ? "entry" : "entries"}. This
+                cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <DialogClose render={<Button type="button" variant="outline" />}>
+                Cancel
+              </DialogClose>
+              <Button
+                variant="destructive"
+                onClick={handleClearAll}
+                disabled={clearing}
+              >
+                {clearing ? "Clearing..." : "Clear all"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
+
+      <Dialog open={editEntryOpen} onOpenChange={setEditEntryOpen}>
+        <DialogContent>
+          <form onSubmit={handleEditSubmit}>
+            <DialogHeader>
+              <DialogTitle>Edit hour entry</DialogTitle>
+              <DialogDescription>
+                Update the name and time range for this entry.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-3 py-4">
+              <div className="grid gap-1.5">
+                <Label htmlFor="edit-entry-name">Name</Label>
+                <Input
+                  id="edit-entry-name"
+                  value={editName}
+                  onChange={(event) => setEditName(event.target.value)}
+                  placeholder="e.g. Gray Belt Class"
+                  required
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-1.5">
+                  <Label htmlFor="edit-entry-start">Start time</Label>
+                  <TimePicker
+                    id="edit-entry-start"
+                    className="time-picker"
+                    value={editStartTime}
+                    onChange={(value) => setEditStartTime(value as string | null)}
+                    disableClock
+                    clearIcon={null}
+                    required
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="edit-entry-end">End time</Label>
+                  <TimePicker
+                    id="edit-entry-end"
+                    className="time-picker"
+                    value={editEndTime}
+                    onChange={(value) => setEditEndTime(value as string | null)}
+                    disableClock
+                    clearIcon={null}
+                    required
+                  />
+                </div>
+              </div>
+              {editStartTime && editEndTime && (
+                <p className="text-sm text-muted-foreground">
+                  {editDuration > 0
+                    ? `Duration: ${formatDuration(editDuration)}`
+                    : "End time must be different from the start time."}
+                </p>
+              )}
+            </div>
+            <DialogFooter>
+              <DialogClose render={<Button type="button" variant="outline" />}>
+                Cancel
+              </DialogClose>
+              <Button type="submit" disabled={!editName || !editDuration}>
+                Save changes
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <div className="flex items-center justify-between rounded-xl border bg-muted/30 px-4 py-3">
         <span className="text-sm font-medium text-muted-foreground">
