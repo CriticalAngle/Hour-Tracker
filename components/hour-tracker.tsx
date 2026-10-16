@@ -16,9 +16,11 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   onSnapshot,
   orderBy,
   query,
+  setDoc,
   updateDoc,
   writeBatch,
 } from "firebase/firestore"
@@ -98,6 +100,11 @@ function formatDuration(hours: number) {
   return `${h}h ${m}m`
 }
 
+const currency = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+})
+
 export function HourTracker({ uid }: { uid: string }) {
   const [entries, setEntries] = React.useState<Entry[]>([])
   const [loading, setLoading] = React.useState(true)
@@ -116,7 +123,14 @@ export function HourTracker({ uid }: { uid: string }) {
   const [editStartTime, setEditStartTime] = React.useState<string | null>(null)
   const [editEndTime, setEditEndTime] = React.useState<string | null>(null)
 
+  const [hourlyRate, setHourlyRate] = React.useState("")
+  const [taxRate, setTaxRate] = React.useState("")
+  const [settingsLoaded, setSettingsLoaded] = React.useState(false)
+
   const totalHours = entries.reduce((sum, entry) => sum + entry.hours, 0)
+  const grossPay = totalHours * (Number(hourlyRate) || 0)
+  const taxAmount = grossPay * ((Number(taxRate) || 0) / 100)
+  const netPay = grossPay - taxAmount
   const duration = hoursBetween(startTime ?? "", endTime ?? "")
   const editDuration = hoursBetween(editStartTime ?? "", editEndTime ?? "")
   const exportText = `${entries
@@ -155,6 +169,31 @@ export function HourTracker({ uid }: { uid: string }) {
 
     return unsubscribe
   }, [uid])
+
+  React.useEffect(() => {
+    getDoc(doc(db, "users", uid)).then((snapshot) => {
+      const data = snapshot.data()
+      if (data?.hourlyRate != null) setHourlyRate(String(data.hourlyRate))
+      if (data?.taxRate != null) setTaxRate(String(data.taxRate))
+      setSettingsLoaded(true)
+    })
+  }, [uid])
+
+  // Save rates to Firestore shortly after the user stops typing.
+  React.useEffect(() => {
+    if (!settingsLoaded) return
+    const timeout = setTimeout(() => {
+      setDoc(
+        doc(db, "users", uid),
+        {
+          hourlyRate: Number(hourlyRate) || 0,
+          taxRate: Number(taxRate) || 0,
+        },
+        { merge: true }
+      )
+    }, 500)
+    return () => clearTimeout(timeout)
+  }, [uid, hourlyRate, taxRate, settingsLoaded])
 
   async function handleAdd(event: React.FormEvent) {
     event.preventDefault()
@@ -500,6 +539,58 @@ export function HourTracker({ uid }: { uid: string }) {
         <span className="text-2xl font-semibold tabular-nums">
           {totalHours}
         </span>
+      </div>
+
+      <div className="space-y-4 rounded-xl border px-4 py-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor="hourly-rate">Hourly rate ($)</Label>
+            <Input
+              id="hourly-rate"
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="0.01"
+              value={hourlyRate}
+              onChange={(event) => setHourlyRate(event.target.value)}
+              placeholder="e.g. 25"
+              disabled={!settingsLoaded}
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="tax-rate">Tax rate (%)</Label>
+            <Input
+              id="tax-rate"
+              type="number"
+              inputMode="decimal"
+              min="0"
+              max="100"
+              step="0.1"
+              value={taxRate}
+              onChange={(event) => setTaxRate(event.target.value)}
+              placeholder="e.g. 20"
+              disabled={!settingsLoaded}
+            />
+          </div>
+        </div>
+        <div className="grid gap-1 text-sm">
+          <div className="flex justify-between text-muted-foreground">
+            <span>Gross pay</span>
+            <span className="tabular-nums">{currency.format(grossPay)}</span>
+          </div>
+          <div className="flex justify-between text-muted-foreground">
+            <span>Taxes</span>
+            <span className="tabular-nums">-{currency.format(taxAmount)}</span>
+          </div>
+        </div>
+        <div className="flex items-center justify-between border-t pt-3">
+          <span className="text-sm font-medium text-muted-foreground">
+            Take-home pay
+          </span>
+          <span className="text-2xl font-semibold tabular-nums">
+            {currency.format(netPay)}
+          </span>
+        </div>
       </div>
     </div>
   )
