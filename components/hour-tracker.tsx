@@ -72,6 +72,13 @@ function formatDate(value: string) {
   })
 }
 
+function todayString() {
+  const now = new Date()
+  const month = String(now.getMonth() + 1).padStart(2, "0")
+  const day = String(now.getDate()).padStart(2, "0")
+  return `${now.getFullYear()}-${month}-${day}`
+}
+
 function hoursBetween(start: string, end: string) {
   if (!start || !end) return 0
 
@@ -127,6 +134,7 @@ export function HourTracker({ uid }: { uid: string }) {
   const [taxRate, setTaxRate] = React.useState("")
   const [settingsLoaded, setSettingsLoaded] = React.useState(false)
 
+  const today = todayString()
   const totalHours = entries.reduce((sum, entry) => sum + entry.hours, 0)
   const grossPay = totalHours * (Number(hourlyRate) || 0)
   const taxAmount = grossPay * ((Number(taxRate) || 0) / 100)
@@ -283,7 +291,14 @@ export function HourTracker({ uid }: { uid: string }) {
               </TableRow>
             ) : entries.length ? (
               entries.map((entry) => (
-                <TableRow key={entry.id}>
+                <TableRow
+                  key={entry.id}
+                  className={
+                    entry.date === today
+                      ? "bg-primary/10 hover:bg-primary/15"
+                      : undefined
+                  }
+                >
                   <TableCell className="font-medium">{entry.name}</TableCell>
                   <TableCell>{formatTime(entry.startTime)}</TableCell>
                   <TableCell>{formatTime(entry.endTime)}</TableCell>
