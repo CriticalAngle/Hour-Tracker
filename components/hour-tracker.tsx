@@ -295,7 +295,7 @@ export function HourTracker({ uid }: { uid: string }) {
                   key={entry.id}
                   className={
                     entry.date === today
-                      ? "bg-primary/10 hover:bg-primary/15"
+                      ? "bg-primary/50 hover:bg-primary/55"
                       : undefined
                   }
                 >
